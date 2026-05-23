@@ -3,29 +3,27 @@ from openai import OpenAI
 import json
 import os
 import requests
-from pypdf import PdfReader
-import gradio as gr
-
+from  PyPDF2 import PdfReader
+import  gradio as gr
 
 load_dotenv(override=True)
+openai = OpenAI()
 
-def push(text):
-    requests.post(
-        "https://api.pushover.net/1/messages.json",
-        data={
-            "token": os.getenv("PUSHOVER_TOKEN"),
-            "user": os.getenv("PUSHOVER_USER"),
-            "message": text,
-        }
-    )
+pushover_user = os.getenv("PUSHOVER_USER")
+pushover_token = os.getenv("PUSHOVER_TOKEN")
+pushover_url = "https://api.pushover.net/1/messages.json"
 
+def push(message):
+    print (f"Push: {message}")
+    payload = {"user": pushover_user, "token": pushover_token, "message": message}
+    requests.post(pushover_url, data=payload)
 
-def record_user_details(email, name="Name not provided", notes="not provided"):
-    push(f"Recording {name} with email {email} and notes {notes}")
+def record_user_details(email='faruk@hudai.com', name="Name not provided", notes="not provided"):
+    push(f"Recording interest from {name} with email {email} and notes {notes}")
     return {"recorded": "ok"}
 
 def record_unknown_question(question):
-    push(f"Recording {question}")
+    push(f"Recording {question} asked that I couldn't answer")
     return {"recorded": "ok"}
 
 record_user_details_json = {
@@ -69,21 +67,39 @@ record_unknown_question_json = {
     }
 }
 
-tools = [{"type": "function", "function": record_user_details_json},
-        {"type": "function", "function": record_unknown_question_json}]
+tools = [{"type": "function", "function": record_user_details_json}, {"type": "function", "function": record_unknown_question_json}]
+
+def handle_tool_calls(tool_calls):
+    results = []
+    for tool_call in tool_calls:
+        tool_name = tool_call.function.name
+        arguments = json.loads(tool_call.function.arguments)
+        print(f"Tool called: {tool_name}", flush=True)
+        print(f"Arguments: {arguments}")
+        tool = globals().get(tool_name)
+        result = tool(**arguments) if tool else {}
+        results.append({"role": "tool", "content": json.dumps(result), "tool_call_id": tool_call.id})
+    return results
+
 
 
 class Me:
 
     def __init__(self):
         self.openai = OpenAI()
-        self.name = "Ed Donner"
-        reader = PdfReader("me/linkedin.pdf")
+        self.name = "Faruk Hossain"
+        reader = PdfReader("me/resume.pdf")
         self.linkedin = ""
         for page in reader.pages:
             text = page.extract_text()
             if text:
                 self.linkedin += text
+        reader = PdfReader("me/linkedin.pdf")
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                self.linkedin += text
+        
         with open("me/summary.txt", "r", encoding="utf-8") as f:
             self.summary = f.read()
 
@@ -100,27 +116,31 @@ class Me:
         return results
     
     def system_prompt(self):
-        system_prompt = f"You are acting as {self.name}. You are answering questions on {self.name}'s website, \
-particularly questions related to {self.name}'s career, background, skills and experience. \
-Your responsibility is to represent {self.name} for interactions on the website as faithfully as possible. \
-You are given a summary of {self.name}'s background and LinkedIn profile which you can use to answer questions. \
-Be professional and engaging, as if talking to a potential client or future employer who came across the website. \
-If you don't know the answer to any question, use your record_unknown_question tool to record the question that you couldn't answer, even if it's about something trivial or unrelated to career. \
-If the user is engaging in discussion, try to steer them towards getting in touch via email; ask for their email and record it using your record_user_details tool. "
+        system_prompt = f"You are acting as {self.name}. You are answering questions based on {self.name}'s resume and linkedin, \
+            particularly questions related to {self.name}'s career, background, skills and experience. \
+            Your responsibility is to represent {self.name} for interactions on the resume as faithfully as possible. \
+            You are given a summary of {self.name}'s background and resume, linkedin which you can use to answer questions. \
+            Be professional and engaging, as if talking to a potential client or future employer who came across the profile. \
+            If you don't know the answer to any question, use your record_unknown_question tool to record the question that you couldn't answer, even if it's about something trivial or unrelated to career. \
+            If the user is engaging in discussion later, try to steer them towards getting in touch via email; ask for their email and record it using your record_user_details tool. "
 
-        system_prompt += f"\n\n## Summary:\n{self.summary}\n\n## LinkedIn Profile:\n{self.linkedin}\n\n"
+        system_prompt += f"\n\n## Summary:\n{self.summary}\n\n## Resume and Linkedin:\n{self.linkedin}\n\n"
         system_prompt += f"With this context, please chat with the user, always staying in character as {self.name}."
+
         return system_prompt
     
     def chat(self, message, history):
         messages = [{"role": "system", "content": self.system_prompt()}] + history + [{"role": "user", "content": message}]
         done = False
+        print (messages)
         while not done:
-            response = self.openai.chat.completions.create(model="gpt-4o-mini", messages=messages, tools=tools)
-            if response.choices[0].finish_reason=="tool_calls":
+            response = openai.chat.completions.create(model="gpt-4o-mini", messages = messages, tools = tools)
+            finish_reason = response.choices[0].finish_reason
+
+            if finish_reason == "tool_calls":
                 message = response.choices[0].message
                 tool_calls = message.tool_calls
-                results = self.handle_tool_call(tool_calls)
+                results = handle_tool_calls(tool_calls)
                 messages.append(message)
                 messages.extend(results)
             else:
