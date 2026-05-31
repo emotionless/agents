@@ -150,5 +150,19 @@ class Me:
 
 if __name__ == "__main__":
     me = Me()
-    gr.ChatInterface(me.chat, type="messages").launch()
-    
+
+    chatbot = gr.Chatbot(
+        value=[
+            {
+                "role": "assistant",
+                "content": "Hello! Thank you for reaching out. How can I assist you today? If you have any questions about my experience, skills, or projects I've worked on, feel free to ask!"
+            }
+        ],
+        type="messages"
+    )
+
+    gr.ChatInterface(
+        fn=me.chat,
+        chatbot=chatbot,
+        type="messages"
+    ).launch()
